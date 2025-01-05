@@ -20,7 +20,8 @@ class TreeDataManager:
                  featureLocation,
                  fileStorageLocation,
                  max_threads=10,
-                 poll_interval=10):
+                 poll_interval=10,
+                 working_directory="./",):
         """
         Initialize the TreeDataManager.
 
@@ -31,8 +32,8 @@ class TreeDataManager:
         :param max_threads:         Maximum number of threads in the thread pool (default=10)
         :param poll_interval:       How many seconds to wait between polling for finished tasks (default=10)
         """
-
-        self.SERVICE_ACCOUNT_FILE = 'service-account-key.json'
+        self.WORKING_DIR = working_directory
+        self.SERVICE_ACCOUNT_FILE = os.path.join(self.WORKING_DIR, "service-account-key.json")
         self.projectName = projectName
         self.imageLocation = imageLocation
         self.featureLocation = featureLocation
