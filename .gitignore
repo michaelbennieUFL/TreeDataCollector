@@ -169,5 +169,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-/client_secrets.json
-/service-account-key.json
+/DataManager/client_secrets.json
+/DataManager/service-account-key.json
