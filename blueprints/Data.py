@@ -1,7 +1,8 @@
 from flask import Blueprint, jsonify, send_from_directory
+from flask_caching import Cache
+from extension import cache  # Import the shared cache instance
 import os
 
-# Create a new Blueprint for serving data
 data_bp = Blueprint("data", __name__, url_prefix="/data")
 
 # Define the paths to images and features directories

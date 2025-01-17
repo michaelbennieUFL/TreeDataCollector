@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 import os
+from extension import cache  # Import the shared cache instance
 
 # Assuming your TreeManipulator code is in the same folder or an importable module
 from DataManager.TreeManipulator import TreeManipulator
@@ -24,6 +25,7 @@ treeManipulator = TreeManipulator(features_dir="./DataManager/cache/features")
 
 
 @api_bp.route('/')
+@cache.cached(timeout=300)  # Cache for 5 minutes
 def index():
     """
     Original endpoint listing available image files and feature files.
@@ -89,26 +91,23 @@ def update_tree_info():
 
 
 @api_bp.route('/features/sorted', methods=['GET'])
+@cache.cached(timeout=300)  # Cache for 5 minutes
 def list_features_sorted():
     """
     GET /api/features/sorted
     Returns the feature files in ascending date order.
-    (If you want descending, you can reverse it.)
+    Cached for performance.
     """
     feature_dates = dataManager.listFeaturesTimeStates()  # e.g. ["2018_04_04", "2018_05_01", ...]
-    # If you want actual file names with .geojson, you might do:
-    # sorted_fnames = sorted([f"{d}.geojson" for d in feature_dates])
-    # For demonstration, we return the date strings themselves
     return jsonify({"sorted_feature_dates": feature_dates}), 200
 
 
 @api_bp.route('/feature/<feature_filename>/image', methods=['GET'])
+@cache.cached(timeout=300)  # Cache for 5 minutes
 def get_corresponding_image(feature_filename):
     """
     GET /api/feature/2024_02_01.geojson/image
-    1) Parse date from '2024_02_01.geojson' => '2024-02-01'
-    2) Check if '2024-02-01.tif' is in local image folder
-    3) Return a JSON with the image path or an error if not found
+    Cached to improve performance for frequently accessed images.
     """
     # Strip out .geojson
     date_str = feature_filename.replace(".geojson", "")
@@ -129,5 +128,4 @@ def get_corresponding_image(feature_filename):
             "local_path": local_path
         }), 200
     else:
-        # Perhaps the image doesn’t exist locally yet
         return jsonify({"error": "No corresponding image file found", "expected_image": expected_image_name}), 404
