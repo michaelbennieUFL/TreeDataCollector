@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, render_template, request
 from flask_caching import Cache
 from flask_session import Session
 
@@ -20,6 +20,14 @@ cache.init_app(app, config={"CACHE_TYPE": "SimpleCache", "CACHE_DEFAULT_TIMEOUT"
 app.register_blueprint(testing_bp)
 app.register_blueprint(api_bp)
 app.register_blueprint(data_bp)
+
+
+
+
+@app.route('/')
+def index():
+    return render_template('mainpage.html')
+
 
 if __name__ == '__main__':
     app.run(debug=True)
