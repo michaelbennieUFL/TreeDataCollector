@@ -36,16 +36,15 @@ let statusVisibility = {
   2) Globals
 **********************************************/
 let map, geojsonLayer;
-let selectedFeature = null;
-let selectedRowEl   = null;   // Track which row is highlighted
-let forestData      = [];     // Array of { GlobalID, area, latin, status }
-
-// Dictionary to retrieve the Leaflet layer from a GlobalID
-let featureMap      = {};
+let selectedFeature   = null;
+let selectedRowEl     = null;   // Track which row is highlighted
+let forestData        = [];     // Array of { GlobalID, area, latin, status }
+let featureMap        = {};     // Dictionary: GlobalID -> Leaflet layer
 
 let inputLatin, inputStatus;
-let mouseInfo;              // #coords element
-let isHoveringFeature = false; // Track if mouse is over a polygon
+let mouseInfo;                  // #coords element
+let isHoveringFeature = false;  // Track if mouse is over a polygon
+
 // For table sorting
 let currentSortKey = null;
 let currentSortDir = 1; // 1 = ascending, -1 = descending
@@ -96,14 +95,13 @@ window.addEventListener("DOMContentLoaded", () => {
         const p = feat.properties || {};
         return {
           GlobalID: p.GlobalID || "",
-          // Show area as a number, but we'll limit decimal places when rendering
           area: p.area || "",
           latin: p.latin || "",
           status: p.status || ""
         };
       });
 
-      // At the end of fetch, we render the table
+      // Render table initially
       renderForestTable();
     })
     .catch(err => console.error("Error loading GeoJSON:", err));
@@ -111,10 +109,8 @@ window.addEventListener("DOMContentLoaded", () => {
   // Mouse panel
   mouseInfo = document.getElementById("coords");
 
-  // Track the mouse position on the map - (no polygon feature here)
-  // We do the polygon's "mouseover" for the ID/Name/Status
+  // Update mouse panel with lat/lng when NOT hovering a polygon
   map.on("mousemove", e => {
-    // Only update the mouse panel if not hovering over a polygon
     if (!isHoveringFeature) {
       updateMousePanel(e.latlng?.lat, e.latlng?.lng, null);
     }
@@ -159,7 +155,7 @@ window.addEventListener("DOMContentLoaded", () => {
   4) onEachFeature
 **********************************************/
 function onEachFeature(feature, layer){
-  // Store ref in featureMap for easy highlight
+  // Map the layer to its GlobalID
   const gid = feature.properties?.GlobalID;
   if(gid) {
     featureMap[gid] = layer;
@@ -167,13 +163,11 @@ function onEachFeature(feature, layer){
 
   // Click to select/unselect
   layer.on("click", () => {
-    // Unselect the old
     if(selectedFeature && selectedFeature !== layer) {
       unselectFeature(selectedFeature);
     }
     selectedFeature = layer;
 
-    // Apply selected style
     layer.setStyle({
       fillOpacity: 0.08,
       color: "blue",
@@ -186,28 +180,25 @@ function onEachFeature(feature, layer){
     inputLatin.value = props.latin || "";
     inputStatus.value = props.status || "";
 
-    // Also highlight & scroll to the corresponding row in the table
     highlightRow(gid, /*scroll*/true);
   });
 
   // Hover highlight (only if visible and not selected)
   layer.on("mouseover", (e) => {
-    isHoveringFeature = true; // Set flag to true
+    isHoveringFeature = true;
     if (selectedFeature === layer) return; // skip if selected
     const st = normalizeStatus(feature.properties?.status);
     if (statusVisibility[st]) {
       layer.setStyle({ color: "yellow", weight: 2, opacity: 1 });
     }
-    // Update the mouse panel with the polygon's properties + actual mouse lat/lng
     updateMousePanel(e.latlng?.lat, e.latlng?.lng, feature);
   });
 
   // Mouseout revert
   layer.on("mouseout", () => {
-    isHoveringFeature = false; // Reset flag when leaving the polygon
+    isHoveringFeature = false;
     if (selectedFeature === layer) return; // skip if selected
     resetFeatureStyle(layer);
-    // Revert to just showing mouse position with no polygon data
     updateMousePanel(undefined, undefined, null);
   });
 }
@@ -252,7 +243,6 @@ function buildStatusMenu(){
     const div = document.createElement("div");
     div.className = "status-item";
 
-    // Checkbox toggle
     const chk = document.createElement("input");
     chk.type = "checkbox";
     chk.checked = statusVisibility[st];
@@ -262,16 +252,13 @@ function buildStatusMenu(){
       refreshVisibility();
     });
 
-    // Color swatch
     const swatch = document.createElement("span");
     swatch.className = "color-swatch";
     swatch.style.backgroundColor = statusColors[st];
 
-    // Label
     const label = document.createElement("span");
     label.textContent = st;
 
-    // Submenu for color picking
     const submenu = document.createElement("div");
     submenu.className = "submenu";
 
@@ -286,7 +273,6 @@ function buildStatusMenu(){
     submenu.appendChild(colorPicker);
 
     div.addEventListener("click", (evt) => {
-      // Avoid toggling if clicking the checkbox itself
       if(evt.target !== chk) {
         submenu.classList.toggle("open");
       }
@@ -364,37 +350,67 @@ function normalizeStatus(st){
 
 /**********************************************
   12) submitTreeEdit
+     - Locally update polygon + table
+     - Also POST to your /api/treeinfo endpoint
 **********************************************/
 function submitTreeEdit(){
   if(!selectedFeature) {
     alert("No polygon selected.");
     return;
   }
-  const feat = selectedFeature.feature;
+  const feat  = selectedFeature.feature;
   const props = feat.properties;
 
+  // Local changes
   props.latin  = inputLatin.value.trim();
   props.status = inputStatus.value.trim();
 
-  // Re-style
+  // Re-style and unselect
   resetFeatureStyle(selectedFeature);
-  // Unselect
   unselectFeature(selectedFeature);
 
-  // Update forestData
+  // Update forestData array
   const row = forestData.find(r => r.GlobalID === props.GlobalID);
   if(row) {
     row.latin  = props.latin;
     row.status = props.status;
   }
 
-  // If there's an existing sort, re-sort the data with the last known sort key/dir
+  // Re-sort if needed, then re-render
   if(currentSortKey !== null) {
     sortForestData(currentSortKey, currentSortDir);
   }
-
-  // Re-render the table with updated data
   renderForestTable();
+
+  // ========== NEW: POST to your /api/treeinfo route ==========
+  const postData = {
+    filename: DATE_STR + ".geojson",    // e.g. "2024_02_01.geojson"
+    global_id: props.GlobalID,
+    adjacency_days: 0,                 // Adjust as needed
+    new_properties: {
+      status: props.status,
+      latin: props.latin
+    }
+  };
+
+  fetch("/api/treeinfo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(postData)
+  })
+  .then(resp => resp.json())
+  .then(data => {
+    console.log("Update response:", data);
+    if (data.error) {
+      alert("Error updating treeinfo: " + data.error);
+    } else {
+      // success
+      // You could show a small 'update successful' message, if desired
+    }
+  })
+  .catch(err => {
+    console.error("Error in updating treeinfo", err);
+  });
 }
 
 /**********************************************
@@ -403,18 +419,15 @@ function submitTreeEdit(){
 function renderForestTable(){
   const tbody = document.querySelector("#forest-table tbody");
   if(!tbody) return;
-
-  // Clear existing
   tbody.innerHTML = "";
 
-  // Re-render (with column order: latin, status, area, GlobalID)
   forestData.forEach(item => {
     const tr = document.createElement("tr");
-    tr.dataset.gid = item.GlobalID; // store the ID so we can highlight from row click
+    tr.dataset.gid = item.GlobalID;
 
     // Limit area to 1 decimal place
     let areaVal = parseFloat(item.area);
-    if(isNaN(areaVal)) areaVal = 0; // fallback if not numeric
+    if(isNaN(areaVal)) areaVal = 0;
     const displayArea = areaVal.toFixed(1);
 
     tr.innerHTML = `
@@ -424,7 +437,7 @@ function renderForestTable(){
       <td>${item.GlobalID}</td>
     `;
 
-    // Row click -> highlight the corresponding polygon
+    // Clicking a row highlights the polygon
     tr.addEventListener("click", () => {
       highlightFeatureByGlobalID(item.GlobalID);
     });
@@ -447,13 +460,11 @@ function updateMousePanel(lat, lng, feature){
   }
 
   let treeID = "unknown", treeName = "unknown", treeStatus = "unknown";
-
-  // If we actually have a polygon feature under the mouse
   if(feature && feature.properties) {
     const p = feature.properties;
     if(p.GlobalID && p.GlobalID.trim()) treeID = p.GlobalID;
-    if(p.latin   && p.latin.trim())     treeName = p.latin;
-    if(p.status  && p.status.trim())    treeStatus = p.status;
+    if(p.latin && p.latin.trim())       treeName = p.latin;
+    if(p.status && p.status.trim())     treeStatus = p.status;
   }
 
   text += `\nID: ${treeID}\nName: ${treeName}\nStatus: ${treeStatus}`;
@@ -482,20 +493,15 @@ function sortForestData(key, dir){
 
 /**********************************************
   16) highlightRow
-     - highlight the row in the table
-     - optionally scroll to that row
 **********************************************/
 function highlightRow(gid, scroll=false){
-  // Unhighlight old row
   if(selectedRowEl) {
     selectedRowEl.classList.remove("selected");
   }
-  // Find new row
   const newRow = document.querySelector(`tr[data-gid="${gid}"]`);
   if(newRow) {
     newRow.classList.add("selected");
     selectedRowEl = newRow;
-    // Scroll to the row if requested
     if(scroll) {
       newRow.scrollIntoView({
         behavior: "smooth",
@@ -507,15 +513,11 @@ function highlightRow(gid, scroll=false){
 
 /**********************************************
   17) highlightFeatureByGlobalID
-     - highlight the polygon on the map from row
 **********************************************/
 function highlightFeatureByGlobalID(gid){
-  // Unselect old
   if(selectedFeature) {
     unselectFeature(selectedFeature);
   }
-
-  // highlight new
   const layer = featureMap[gid];
   if(layer) {
     selectedFeature = layer;
@@ -525,7 +527,6 @@ function highlightFeatureByGlobalID(gid){
       weight: 2,
       opacity: 1
     });
-    // also highlight that row (and scroll to it)
     highlightRow(gid, /*scroll*/true);
   }
 }
